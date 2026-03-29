@@ -266,6 +266,10 @@ class MainWindow(FluentWindow):
         # 네비게이션 아이템 추가
         self.addSubInterface(self.home_widget, FIF.HOME, "스케줄 리스트")
         
+        # 뒤로가기 버튼과 햄버거 메뉴 버튼 숨기기
+        self.navigationInterface.setReturnButtonVisible(False)
+        self.navigationInterface.setMenuButtonVisible(False)
+        
         # '스케줄 추가'는 탭이 아닌 클릭 시 팝업을 띄우는 버튼으로 추가
         self.navigationInterface.addItem(
             routeKey='add_schedule',
