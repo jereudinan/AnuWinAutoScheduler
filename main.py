@@ -11,13 +11,15 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QSystemTrayIcon, QMenu, QTableWidgetItem, QHeaderView)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from qfluentwidgets import (FluentWindow, NavigationItemPosition, MessageBox, 
-                            SubtitleLabel, BodyLabel, LineEdit, PushButton, ComboBox, 
+                            SubtitleLabel, BodyLabel, CaptionLabel, LineEdit, PushButton, ComboBox, 
                             SwitchButton, setTheme, Theme, TableWidget, 
-                            TimePicker, TextEdit, InfoBar, MessageBoxBase, FluentIcon as FIF)
+                            TimePicker, TextEdit, InfoBar, MessageBoxBase, FluentIcon as FIF,
+                            HorizontalSeparator)
 
 # --- 설정 및 상수 ---
 CONFIG_FILE = "config.json"
 APP_NAME = "AnuAutoScheduler"
+VERSION = "1.0.0"
 
 def get_resource_path(relative_path):
     """ PyInstaller 환경에서도 리소스 경로를 올바르게 반환합니다. """
@@ -236,7 +238,22 @@ class SettingWidget(QWidget):
         browser_layout.addWidget(self.browser_combo)
         browser_layout.addStretch(1)
         layout.addLayout(browser_layout)
+
+        # --- 구분선 및 제작자 정보 추가 ---
+        layout.addSpacing(10)
+        layout.addWidget(HorizontalSeparator(self))
+        layout.addSpacing(10)
+        
+        creator_label = BodyLabel("ㆍ오작동(버그)제보: phb@somunnanshop.com", self)
+        creator_label.setStyleSheet("color: gray;")
+        layout.addWidget(creator_label)
+        
         layout.addStretch(1)
+        
+        # --- 최하단 중앙 버전 정보 ---
+        version_label = CaptionLabel(f"Version {VERSION}", self)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
 
     def toggle_startup(self, is_checked):
         self.main_window.config['run_at_startup'] = is_checked
