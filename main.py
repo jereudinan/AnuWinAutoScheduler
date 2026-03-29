@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QSystemTrayIcon, QMenu, QTableWidgetItem, QHeaderView)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from qfluentwidgets import (FluentWindow, NavigationItemPosition, MessageBox, 
-                            SubtitleLabel, LineEdit, PushButton, ComboBox, 
+                            SubtitleLabel, BodyLabel, LineEdit, PushButton, ComboBox, 
                             SwitchButton, setTheme, Theme, TableWidget, 
                             TimePicker, TextEdit, InfoBar, MessageBoxBase, FluentIcon as FIF)
 
@@ -104,7 +104,7 @@ class AddScheduleDialog(MessageBoxBase):
         self.viewLayout.addWidget(self.titleLabel)
 
         self.time_picker = TimePicker(self)
-        self.viewLayout.addWidget(QLabel("시간 설정 (시:분):"))
+        self.viewLayout.addWidget(BodyLabel("시간 설정 (시:분):"))
         self.viewLayout.addWidget(self.time_picker)
 
         self.task_name_input = LineEdit(self)
@@ -175,6 +175,10 @@ class HomeWidget(QWidget):
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(['시간', '작업 이름', 'URL', '관리'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        # 더블클릭 시 셀 편집 방지
+        self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        
         layout.addWidget(self.table)
         self.update_table()
 
@@ -206,23 +210,25 @@ class SettingWidget(QWidget):
         layout.setSpacing(20)
         layout.addWidget(SubtitleLabel("기본 설정", self))
         startup_layout = QHBoxLayout()
-        startup_layout.addWidget(QLabel("부팅 시 자동 실행:"))
+        startup_layout.addWidget(BodyLabel("부팅 시 자동 실행:"))
         self.startup_switch = SwitchButton(self)
         self.startup_switch.setChecked(self.main_window.config.get('run_at_startup', False))
         self.startup_switch.checkedChanged.connect(self.toggle_startup)
         startup_layout.addWidget(self.startup_switch)
         startup_layout.addStretch(1)
         layout.addLayout(startup_layout)
+        
         theme_layout = QHBoxLayout()
-        theme_layout.addWidget(QLabel("다크 모드 사용:"))
+        theme_layout.addWidget(BodyLabel("다크 모드 사용:"))
         self.theme_switch = SwitchButton(self)
         self.theme_switch.setChecked(self.main_window.config.get('theme', 'Light') == 'Dark')
         self.theme_switch.checkedChanged.connect(self.toggle_theme)
         theme_layout.addWidget(self.theme_switch)
         theme_layout.addStretch(1)
         layout.addLayout(theme_layout)
+        
         browser_layout = QHBoxLayout()
-        browser_layout.addWidget(QLabel("기본 브라우저:"))
+        browser_layout.addWidget(BodyLabel("기본 브라우저:"))
         self.browser_combo = ComboBox(self)
         self.browser_combo.addItems(["Chrome", "Edge"])
         self.browser_combo.setCurrentText(self.main_window.config.get('browser', 'Chrome'))
