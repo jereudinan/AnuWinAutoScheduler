@@ -4,8 +4,10 @@ import json
 import winreg
 import subprocess
 import webbrowser
+import ctypes
 from datetime import datetime
 from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QSystemTrayIcon, QMenu, QTableWidgetItem, QHeaderView)
@@ -16,18 +18,26 @@ from qfluentwidgets import (FluentWindow, NavigationItemPosition, MessageBox,
                             TimePicker, TextEdit, InfoBar, MessageBoxBase, FluentIcon as FIF,
                             HorizontalSeparator)
 
-# --- 설정 및 상수 ---
-CONFIG_FILE = "config.json"
-APP_NAME = "AnuAutoScheduler"
-VERSION = "1.0.0"
+# --- 경로 설정 함수 ---
+def get_base_path():
+    """ 프로그램의 실행 파일 또는 스크립트가 위치한 디렉토리 경로를 반환합니다. """
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 def get_resource_path(relative_path):
-    """ PyInstaller 환경에서도 리소스 경로를 올바르게 반환합니다. """
+    """ PyInstaller 환경(리소스 번들)에서도 파일 경로를 올바르게 반환합니다. """
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    return os.path.join(get_base_path(), relative_path)
 
+# --- 설정 및 상수 ---
+BASE_PATH = get_base_path()
+CONFIG_FILE = os.path.join(BASE_PATH, "config.json")
 SOUND_FILE = get_resource_path(os.path.join("sounds", "Alarm.mp3"))
+APP_NAME = "AnuAutoScheduler"
+SERVER_NAME = "AnuAutoScheduler_Unique_Server"
+VERSION = "1.0.1"
 
 class ConfigManager:
     @staticmethod
@@ -37,6 +47,7 @@ class ConfigManager:
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    # 누락된 기본 키 보강
                     for key, value in default_config.items():
                         if key not in data:
                             data[key] = value
@@ -57,18 +68,23 @@ class RegistryUtils:
     @staticmethod
     def set_startup(enable):
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        
+        # 실행 파일 경로 확보 및 큰따옴표 처리
         if getattr(sys, 'frozen', False):
-            exe_path = os.path.abspath(sys.executable)
+            # 빌드된 .exe 환경
+            exe_path = f'"{sys.executable}"'
         else:
+            # 스크립트 환경 (pythonw.exe 우선 사용)
             python_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
             if not os.path.exists(python_exe):
                 python_exe = sys.executable
-            exe_path = f'"{python_exe}" "{os.path.abspath(sys.argv[0])}"'
+            script_path = os.path.abspath(sys.argv[0])
+            exe_path = f'"{python_exe}" "{script_path}"'
 
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
             if enable:
-                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, exe_path if '"' in exe_path else f'"{exe_path}"')
+                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, exe_path)
             else:
                 try:
                     winreg.DeleteValue(key, APP_NAME)
@@ -327,8 +343,17 @@ class MainWindow(FluentWindow):
         dialog.exec()
 
     def show_window(self):
+        if self.isMinimized():
+            self.showNormal()
         self.show()
+        self.raise_()
         self.activateWindow()
+        
+        # 윈도우에서 강제로 최상단으로 가져오기 (ctypes 사용)
+        if sys.platform == "win32":
+            hwnd = int(self.winId())
+            ctypes.windll.user32.ShowWindow(hwnd, 9) # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
 
     def tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -388,6 +413,28 @@ class MainWindow(FluentWindow):
 if __name__ == '__main__':
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
+    
+    # --- 중복 실행 방지 로직 ---
+    socket = QLocalSocket()
+    socket.connectToServer(SERVER_NAME)
+    
+    # 이미 서버가 존재하면 (프로그램이 실행 중이면)
+    if socket.waitForConnected(500):
+        # 기존 인스턴스에 메시지 전송 (연결만으로도 newConnection 이벤트 발생)
+        socket.disconnectFromServer()
+        sys.exit(0)
+        
+    # 서버가 없으면 (내가 첫 번째 인스턴스면) 서버 생성
+    local_server = QLocalServer()
+    if not local_server.listen(SERVER_NAME):
+        # 만약 비정상 종료 등으로 소켓 파일이 남아있다면 삭제 후 재시도
+        QLocalServer.removeServer(SERVER_NAME)
+        local_server.listen(SERVER_NAME)
+
     window = MainWindow()
+    
+    # 새로운 연결 요청이 오면 (사용자가 프로그램을 또 실행하려고 하면) 창 표시
+    local_server.newConnection.connect(window.show_window)
+    
     window.show()
     sys.exit(app.exec())
