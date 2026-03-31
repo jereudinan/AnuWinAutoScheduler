@@ -71,10 +71,8 @@ class RegistryUtils:
         
         # 실행 파일 경로 확보 및 큰따옴표 처리
         if getattr(sys, 'frozen', False):
-            # 빌드된 .exe 환경
             exe_path = f'"{sys.executable}"'
         else:
-            # 스크립트 환경 (pythonw.exe 우선 사용)
             python_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
             if not os.path.exists(python_exe):
                 python_exe = sys.executable
@@ -82,7 +80,12 @@ class RegistryUtils:
             exe_path = f'"{python_exe}" "{script_path}"'
 
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+            # KEY_WRITE와 KEY_WOW64_64KEY를 사용하여 64비트 시스템에서도 안정적으로 쓰기 권한 확보
+            access = winreg.KEY_WRITE
+            if sys.maxsize > 2**32: # 64비트 환경 체크
+                access |= winreg.KEY_WOW64_64KEY
+            
+            key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, access)
             if enable:
                 winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, exe_path)
             else:
@@ -91,8 +94,10 @@ class RegistryUtils:
                 except FileNotFoundError:
                     pass
             winreg.CloseKey(key)
+            return True
         except Exception as e:
             print(f"Startup registry error: {e}")
+            return False
 
     @staticmethod
     def get_browser_path(browser="Chrome"):
@@ -108,6 +113,45 @@ class RegistryUtils:
             except WindowsError:
                 continue
         return None
+
+class ShortcutUtils:
+    @staticmethod
+    def create_desktop_shortcut():
+        """ 바탕화면에 바로가기 아이콘을 생성합니다. """
+        try:
+            desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+            shortcut_path = os.path.join(desktop, f"{APP_NAME}.lnk")
+            
+            if getattr(sys, 'frozen', False):
+                target_path = sys.executable
+                arguments = ""
+                icon_location = sys.executable
+                working_dir = os.path.dirname(sys.executable)
+            else:
+                python_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                if not os.path.exists(python_exe):
+                    python_exe = sys.executable
+                target_path = python_exe
+                arguments = os.path.abspath(sys.argv[0])
+                icon_location = python_exe
+                working_dir = os.path.dirname(arguments)
+
+            # PowerShell을 사용하여 바로가기 생성
+            ps_command = (
+                f'$WshShell = New-Object -ComObject WScript.Shell; '
+                f'$Shortcut = $WshShell.CreateShortcut("{shortcut_path}"); '
+                f'$Shortcut.TargetPath = "{target_path}"; '
+                f'$Shortcut.Arguments = "{arguments}"; '
+                f'$Shortcut.WorkingDirectory = "{working_dir}"; '
+                f'$Shortcut.IconLocation = "{icon_location}"; '
+                f'$Shortcut.Save()'
+            )
+            
+            subprocess.run(["powershell", "-Command", ps_command], capture_output=True, check=True)
+            return True
+        except Exception as e:
+            print(f"Shortcut creation error: {e}")
+            return False
 
 # --- UI 컴포넌트들 ---
 
@@ -255,12 +299,21 @@ class SettingWidget(QWidget):
         browser_layout.addStretch(1)
         layout.addLayout(browser_layout)
 
+        # --- 바로가기 생성 섹션 추가 ---
+        shortcut_layout = QHBoxLayout()
+        shortcut_layout.addWidget(BodyLabel("바탕화면 바로가기:"))
+        self.shortcut_button = PushButton("바로가기 만들기", self)
+        self.shortcut_button.clicked.connect(self.create_shortcut)
+        shortcut_layout.addWidget(self.shortcut_button)
+        shortcut_layout.addStretch(1)
+        layout.addLayout(shortcut_layout)
+
         # --- 구분선 및 제작자 정보 추가 ---
         layout.addSpacing(10)
         layout.addWidget(HorizontalSeparator(self))
         layout.addSpacing(10)
         
-        creator_label = BodyLabel("ㆍ오작동(버그)제보: phb@somunnanshop.com", self)
+        creator_label = BodyLabel("오작동(버그)제보: phb@somunnanshop.com", self)
         creator_label.setStyleSheet("color: gray;")
         layout.addWidget(creator_label)
         
@@ -272,9 +325,15 @@ class SettingWidget(QWidget):
         layout.addWidget(version_label)
 
     def toggle_startup(self, is_checked):
-        self.main_window.config['run_at_startup'] = is_checked
-        ConfigManager.save(self.main_window.config)
-        RegistryUtils.set_startup(is_checked)
+        success = RegistryUtils.set_startup(is_checked)
+        if success:
+            self.main_window.config['run_at_startup'] = is_checked
+            ConfigManager.save(self.main_window.config)
+        else:
+            # 실패 시 스위치를 원상복구하고 에러 메시지 표시
+            self.startup_switch.setChecked(not is_checked)
+            InfoBar.error("설정 오류", "자동 실행 설정에 실패했습니다. 권한이 없거나 보안 프로그램에 의해 차단되었을 수 있습니다.", 
+                          duration=3000, parent=self.main_window)
 
     def toggle_theme(self, is_checked):
         theme = "Dark" if is_checked else "Light"
@@ -286,6 +345,18 @@ class SettingWidget(QWidget):
         self.main_window.config['browser'] = text
         ConfigManager.save(self.main_window.config)
 
+    def create_shortcut(self):
+        """ 바탕화면 바로가기 생성 확인 메시지 및 실행 """
+        msg = MessageBox("바로가기 생성", "바탕화면에 바로가기 아이콘을 생성 할까요?", self.main_window)
+        msg.yesButton.setText("확인")
+        msg.cancelButton.setText("취소")
+        
+        if msg.exec():
+            if ShortcutUtils.create_desktop_shortcut():
+                InfoBar.success("성공", "바탕화면에 바로가기가 생성되었습니다.", duration=2000, parent=self.main_window)
+            else:
+                InfoBar.error("실패", "바로가기 생성 중 오류가 발생했습니다.", duration=3000, parent=self.main_window)
+
 class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
@@ -293,6 +364,16 @@ class MainWindow(FluentWindow):
         setTheme(Theme.DARK if self.config.get('theme') == 'Dark' else Theme.LIGHT)
         self.setWindowTitle("ANU Auto Scheduler")
         self.resize(900, 700)
+
+        # --- 아이콘 및 툴팁 설정 ---
+        # 노란색(Gold) 아이콘 생성 (초시계와 유사한 HISTORY 아이콘 사용)
+        from PyQt6.QtGui import QColor
+        app_icon = FIF.HISTORY.icon(color=QColor("#FFD700")) # 금색/노란색
+        self.setWindowIcon(app_icon)
+
+        # 자동 실행 설정이 켜져 있으면 현재 위치로 레지스트리 정보 최신화
+        if self.config.get('run_at_startup', False):
+            RegistryUtils.set_startup(True)
         
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -321,7 +402,9 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.setting_widget, FIF.SETTING, "설정", NavigationItemPosition.BOTTOM)
         
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon))
+        self.tray_icon.setIcon(app_icon) # 트레이 아이콘도 동일하게 설정
+        self.tray_icon.setToolTip(APP_NAME) # 마우스 오버 시 표시될 이름
+        
         tray_menu = QMenu()
         show_action = QAction("열기", self)
         show_action.triggered.connect(self.show_window)
@@ -411,6 +494,11 @@ class MainWindow(FluentWindow):
                 InfoBar.error("실행 오류", f"URL을 열 수 없습니다: {e}", parent=self)
 
 if __name__ == '__main__':
+    # --- 작업 표시줄 아이콘 강제 설정 (AppUserModelID) ---
+    if sys.platform == "win32":
+        myappid = f'mycompany.myproduct.subproduct.{VERSION}' # 고유 ID
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     
